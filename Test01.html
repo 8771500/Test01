@@ -1,202 +1,428 @@
 <!doctype html>
 <html lang="en">
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Doc-u-Changer</title>
-<style>
-  :root { color-scheme: dark; }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; min-height: 100vh; display: grid; place-items: center;
-    background: #111; color: #eee; font: 16px system-ui, sans-serif;
-  }
-  main { width: min(92vw, 680px); padding: 24px; }
-  h1 { margin: 0 0 20px; font-size: 1.5rem; }
-  label { display: block; margin: 16px 0 7px; color: #bbb; }
-  input, textarea, button {
-    width: 100%; border: 1px solid #444; border-radius: 7px;
-    background: #1d1d1d; color: #eee; font: inherit; padding: 12px;
-  }
-  textarea { min-height: 150px; resize: vertical; }
-  button { width: auto; cursor: pointer; margin: 10px 8px 0 0; }
-  button:hover { background: #303030; }
-  .hidden { display: none; }
-  #status { min-height: 1.3em; margin-top: 14px; color: #ff8a8a; }
-</style>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Doc-U-Changer</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #111;
+      --panel: #1b1b1b;
+      --border: #3a3a3a;
+      --text: #f2f2f2;
+      --muted: #b7b7b7;
+      --button: #2e2e2e;
+      --button-hover: #414141;
+      --danger: #e27373;
+    }
 
-<main id="login">
-  <h1>Doc-u-Changer</h1>
-  <label for="password">Password</label>
-  <input id="password" type="password" autocomplete="current-password" autofocus>
-  <button id="loginButton">Open</button>
-  <div id="loginStatus"></div>
-</main>
+    * {
+      box-sizing: border-box;
+    }
 
-<main id="app" class="hidden">
-  <h1>Doc-u-Changer</h1>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Arial, sans-serif;
+    }
 
-  <label for="dailyPassword">Password of the day</label>
-  <input id="dailyPassword" type="password" autocomplete="off">
+    .screen {
+      width: min(760px, 100%);
+      margin: 0 auto;
+      padding: 24px 16px 40px;
+    }
 
-  <label for="input">Plain text or encoded text</label>
-  <textarea id="input" spellcheck="false"></textarea>
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+    }
 
-  <button id="encode">Encode</button>
-  <button id="decode">Decode</button>
-  <button id="clear">Clear</button>
+    h1 {
+      margin: 0 0 8px;
+      font-size: 1.45rem;
+    }
 
-  <label for="output">Output</label>
-  <textarea id="output" readonly spellcheck="false"></textarea>
-  <button id="copy">Copy text</button>
+    p {
+      color: var(--muted);
+      line-height: 1.45;
+    }
 
-  <div id="status"></div>
-</main>
+    label {
+      display: block;
+      margin: 18px 0 7px;
+      font-weight: 700;
+    }
 
-<script>
-"use strict";
+    input,
+    textarea,
+    button {
+      width: 100%;
+      font: inherit;
+    }
 
-const LOGIN_PASSWORD = "1qaz2wsx!QAZ@WSX";
-let dailyPassword = "";
+    input,
+    textarea {
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: #101010;
+      color: var(--text);
+    }
 
-const $ = id => document.getElementById(id);
-const enc = new TextEncoder();
-const dec = new TextDecoder();
+    textarea {
+      min-height: 145px;
+      resize: vertical;
+    }
 
-function bytesToBase64(bytes) {
-  let text = "";
-  bytes.forEach(b => text += String.fromCharCode(b));
-  return btoa(text);
-}
+    input:focus,
+    textarea:focus {
+      outline: 2px solid #6b8ebc;
+      outline-offset: 1px;
+    }
 
-function base64ToBytes(text) {
-  const raw = atob(text);
-  return Uint8Array.from(raw, c => c.charCodeAt(0));
-}
+    .buttons {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-top: 14px;
+    }
 
-async function keyFromPassword(pass, salt) {
-  const baseKey = await crypto.subtle.importKey(
-    "raw", enc.encode(pass), "PBKDF2", false, ["deriveKey"]
-  );
-  return crypto.subtle.deriveKey(
-    { name: "PBKDF2", salt, iterations: 150000, hash: "SHA-256" },
-    baseKey,
-    { name: "AES-GCM", length: 256 },
-    false,
-    ["encrypt", "decrypt"]
-  );
-}
+    button {
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 11px 12px;
+      cursor: pointer;
+      background: var(--button);
+      color: var(--text);
+    }
 
-async function encodeMessage(text) {
-  dailyPassword = $("dailyPassword").value;
+    button:hover {
+      background: var(--button-hover);
+    }
 
-  if (!dailyPassword) {
-    throw new Error("Missing daily password");
-  }
+    .copy-row {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 10px;
+    }
 
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const key = await keyFromPassword(password, salt);
-  const data = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv }, key, enc.encode(text)
-  );
+    .copy-row button {
+      width: auto;
+    }
 
-  // Format: ME1.salt.iv.encrypted-message
-  return "ME1." + [salt, iv, new Uint8Array(data)]
-    .map(bytesToBase64)
-    .map(x => x.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, ""))
-    .join(".");
-}
+    .message {
+      min-height: 1.3em;
+      margin-top: 14px;
+      color: var(--muted);
+    }
 
-function safeBase64ToBytes(text) {
-  text = text.replace(/-/g, "+").replace(/_/g, "/");
-  while (text.length % 4) text += "=";
-  return base64ToBytes(text);
-}
+    .message.error {
+      color: var(--danger);
+    }
 
-async function decodeMessage(text) {
-  dailyPassword = $("dailyPassword").value;
+    .hidden {
+      display: none;
+    }
 
-  if (!dailyPassword) {
-    throw new Error("Missing daily password");
-  }
+    @media (max-width: 480px) {
+      .buttons {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="screen">
+    <section id="loginScreen" class="card">
+      <h1>Doc-U-Changer</h1>
+      <p>Enter the access password to open the encoder.</p>
 
-  const parts = text.trim().split(".");
-  if (parts.length !== 4 || parts[0] !== "ME1") throw new Error();
+      <label for="loginPassword">Access password</label>
+      <input id="loginPassword" type="password" autocomplete="off">
 
-  const salt = safeBase64ToBytes(parts[1]);
-  const iv = safeBase64ToBytes(parts[2]);
-  const encrypted = safeBase64ToBytes(parts[3]);
-  const key = await keyFromPassword(password, salt);
+      <div class="buttons" style="grid-template-columns: 1fr; margin-top: 14px;">
+        <button id="unlockButton" type="button">Unlock</button>
+      </div>
 
-  const data = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv }, key, encrypted
-  );
-  return dec.decode(data);
-}
+      <div id="loginMessage" class="message" aria-live="polite"></div>
+    </section>
 
-$("loginButton").onclick = () => {
-  const entered = $("password").value;
+    <section id="encoderScreen" class="card hidden">
+      <h1>Doc-U-Changer</h1>
+      <p>Use the same password of the day to decode a message.</p>
 
-  if (entered !== LOGIN_PASSWORD) {
-    $("loginStatus").textContent = "Incorrect password.";
-    $("password").value = "";
-    return;
-  }
+      <label for="dailyPassword">Password of the day</label>
+      <input id="dailyPassword" type="password" autocomplete="off">
 
-  $("password").value = "";
-  $("loginStatus").textContent = "";
-  $("login").classList.add("hidden");
-  $("app").classList.remove("hidden");
-  $("dailyPassword").focus();
-};
+      <label for="inputText">Plain text or encoded text</label>
+      <textarea
+        id="inputText"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+      ></textarea>
 
-$("password").addEventListener("keydown", e => {
-  if (e.key === "Enter") $("loginButton").click();
-});
+      <div class="buttons">
+        <button id="encodeButton" type="button">Encode</button>
+        <button id="decodeButton" type="button">Decode</button>
+        <button id="clearButton" type="button">Clear</button>
+      </div>
 
-$("encode").onclick = async () => {
-  $("status").textContent = "";
-  try {
-    $("output").value = await encodeMessage($("input").value);
-  } catch {
-    $("status").textContent = "Could not encode message.";
-  }
-};
+      <label for="outputText">Output</label>
+      <textarea
+        id="outputText"
+        readonly
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+      ></textarea>
 
-$("decode").onclick = async () => {
-  $("status").textContent = "";
-  try {
-    $("output").value = await decodeMessage($("input").value);
-  } catch {
-    $("output").value = "";
-    $("status").textContent = "Could not decode message.";
-  }
-};
+      <div class="copy-row">
+        <button id="copyButton" type="button">Copy text</button>
+      </div>
 
-$("clear").onclick = () => {
-  $("input").value = "";
-  $("output").value = "";
-  $("status").textContent = "";
-  $("input").focus();
-};
+      <div id="encoderMessage" class="message" aria-live="polite"></div>
+    </section>
+  </main>
 
-$("copy").onclick = async () => {
-  try {
-    await navigator.clipboard.writeText($("output").value);
-    $("status").textContent = "Copied.";
-  } catch {
-    $("output").select();
-    document.execCommand("copy");
-    $("status").textContent = "Copied.";
-  }
-};
+  <script>
+    "use strict";
 
-// Remove sensitive text/key from the page when it is being closed.
-addEventListener("pagehide", () => {
-  dailyPassword = "";
-  $("dailyPassword").value = "";
-  $("input").value = "";
-  $("output").value = "";
-});
-</script>
+    const ACCESS_PASSWORD = "1qaz2wsx!QAZ@WSX";
+    const PREFIX = "ME1";
+    const enc = new TextEncoder();
+    const dec = new TextDecoder();
+
+    function $(id) {
+      return document.getElementById(id);
+    }
+
+    function setMessage(element, message, isError = false) {
+      element.textContent = message;
+      element.classList.toggle("error", isError);
+    }
+
+    function bytesToBase64(bytes) {
+      let binary = "";
+      const chunkSize = 0x8000;
+
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+      }
+
+      return btoa(binary);
+    }
+
+    function base64UrlFromBytes(bytes) {
+      return bytesToBase64(bytes)
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/g, "");
+    }
+
+    function safeBase64ToBytes(value) {
+      if (!/^[A-Za-z0-9_-]+$/.test(value)) {
+        throw new Error("Invalid encoded message.");
+      }
+
+      let base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+
+      while (base64.length % 4 !== 0) {
+        base64 += "=";
+      }
+
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+
+      return bytes;
+    }
+
+    async function keyFromPassword(password, salt) {
+      const baseKey = await crypto.subtle.importKey(
+        "raw",
+        enc.encode(password),
+        "PBKDF2",
+        false,
+        ["deriveKey"]
+      );
+
+      return crypto.subtle.deriveKey(
+        {
+          name: "PBKDF2",
+          salt: salt,
+          iterations: 150000,
+          hash: "SHA-256"
+        },
+        baseKey,
+        {
+          name: "AES-GCM",
+          length: 256
+        },
+        false,
+        ["encrypt", "decrypt"]
+      );
+    }
+
+    async function encodeMessage(plainText, dailyPassword) {
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const key = await keyFromPassword(dailyPassword, salt);
+
+      const encrypted = await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv: iv },
+        key,
+        enc.encode(plainText)
+      );
+
+      return [
+        PREFIX,
+        base64UrlFromBytes(salt),
+        base64UrlFromBytes(iv),
+        base64UrlFromBytes(new Uint8Array(encrypted))
+      ].join(".");
+    }
+
+    async function decodeMessage(encodedText, dailyPassword) {
+      const parts = encodedText.trim().split(".");
+
+      if (parts.length !== 4 || parts[0] !== PREFIX) {
+        throw new Error("Invalid encoded message.");
+      }
+
+      const salt = safeBase64ToBytes(parts[1]);
+      const iv = safeBase64ToBytes(parts[2]);
+      const encrypted = safeBase64ToBytes(parts[3]);
+
+      /*
+        The key is derived from the currently entered daily password.
+        AES-GCM will fail here unless it is the exact password used
+        when the message was encoded.
+      */
+      const key = await keyFromPassword(dailyPassword, salt);
+
+      const decrypted = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: iv },
+        key,
+        encrypted
+      );
+
+      return dec.decode(decrypted);
+    }
+
+    function clearAll() {
+      $("dailyPassword").value = "";
+      $("inputText").value = "";
+      $("outputText").value = "";
+      setMessage($("encoderMessage"), "");
+    }
+
+    function unlock() {
+      const password = $("loginPassword").value;
+
+      if (password !== ACCESS_PASSWORD) {
+        setMessage($("loginMessage"), "Incorrect access password.", true);
+        $("loginPassword").value = "";
+        $("loginPassword").focus();
+        return;
+      }
+
+      $("loginPassword").value = "";
+      setMessage($("loginMessage"), "");
+      $("loginScreen").classList.add("hidden");
+      $("encoderScreen").classList.remove("hidden");
+      $("dailyPassword").focus();
+    }
+
+    async function handleEncode() {
+      const dailyPassword = $("dailyPassword").value;
+      const input = $("inputText").value;
+
+      setMessage($("encoderMessage"), "");
+      $("outputText").value = "";
+
+      if (!dailyPassword || !input) {
+        setMessage(
+          $("encoderMessage"),
+          "Enter a password of the day and text to encode.",
+          true
+        );
+        return;
+      }
+
+      try {
+        $("outputText").value = await encodeMessage(input, dailyPassword);
+        setMessage($("encoderMessage"), "Message encoded.");
+      } catch {
+        setMessage($("encoderMessage"), "Could not encode message.", true);
+      }
+    }
+
+    async function handleDecode() {
+      const dailyPassword = $("dailyPassword").value;
+      const input = $("inputText").value;
+
+      setMessage($("encoderMessage"), "");
+      $("outputText").value = "";
+
+      if (!dailyPassword || !input) {
+        setMessage(
+          $("encoderMessage"),
+          "Enter a password of the day and encoded text.",
+          true
+        );
+        return;
+      }
+
+      try {
+        $("outputText").value = await decodeMessage(input, dailyPassword);
+        setMessage($("encoderMessage"), "Message decoded.");
+      } catch {
+        $("outputText").value = "";
+        setMessage($("encoderMessage"), "Could not decode message.", true);
+      }
+    }
+
+    async function copyOutput() {
+      const output = $("outputText").value;
+
+      if (!output) {
+        return;
+      }
+
+      try {
+        await navigator.clipboard.writeText(output);
+        setMessage($("encoderMessage"), "Copied.");
+      } catch {
+        $("outputText").focus();
+        $("outputText").select();
+        document.execCommand("copy");
+        setMessage($("encoderMessage"), "Copied.");
+      }
+    }
+
+    $("unlockButton").addEventListener("click", unlock);
+
+    $("loginPassword").addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        unlock();
+      }
+    });
+
+    $("encodeButton").addEventListener("click", handleEncode);
+    $("decodeButton").addEventListener("click", handleDecode);
+    $("clearButton").addEventListener("click", clearAll);
+    $("copyButton").addEventListener("click", copyOutput);
+
+    window.addEventListener("beforeunload", clearAll);
+  </script>
+</body>
 </html>
