@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Doc-u-Changer</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    background: #111; color: #eee; font: 16px system-ui, sans-serif;
+  }
+  main { width: min(92vw, 680px); padding: 24px; }
+  h1 { margin: 0 0 20px; font-size: 1.5rem; }
+  label { display: block; margin: 16px 0 7px; color: #bbb; }
+  input, textarea, button {
+    width: 100%; border: 1px solid #444; border-radius: 7px;
+    background: #1d1d1d; color: #eee; font: inherit; padding: 12px;
+  }
+  textarea { min-height: 150px; resize: vertical; }
+  button { width: auto; cursor: pointer; margin: 10px 8px 0 0; }
+  button:hover { background: #303030; }
+  .hidden { display: none; }
+  #status { min-height: 1.3em; margin-top: 14px; color: #ff8a8a; }
+</style>
+
+<main id="login">
+  <h1>Doc-u-Changer</h1>
+  <label for="password">Password</label>
+  <input id="password" type="password" autocomplete="current-password" autofocus>
+  <button id="loginButton">Open</button>
+  <div id="loginStatus"></div>
+</main>
+
+<main id="app" class="hidden">
+  <h1>Doc-u-Changer</h1>
+
+  <label for="dailyPassword">Password of the day</label>
+  <input id="dailyPassword" type="password" autocomplete="off">
+
+  <label for="input">Plain text or encoded text</label>
+  <textarea id="input" spellcheck="false"></textarea>
+
+  <button id="encode">Encode</button>
+  <button id="decode">Decode</button>
+  <button id="clear">Clear</button>
+
+  <label for="output">Output</label>
+  <textarea id="output" readonly spellcheck="false"></textarea>
+  <button id="copy">Copy text</button>
+
+  <div id="status"></div>
+</main>
+
+<script>
+"use strict";
+
+const LOGIN_PASSWORD = "1qaz2wsx!QAZ@WSX";
+let dailyPassword = "";
+
+const $ = id => document.getElementById(id);
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+
+function bytesToBase64(bytes) {
+  let text = "";
+  bytes.forEach(b => text += String.fromCharCode(b));
+  return btoa(text);
+}
+
+function base64ToBytes(text) {
+  const raw = atob(text);
+  return Uint8Array.from(raw, c => c.charCodeAt(0));
+}
+
+async function keyFromPassword(pass, salt) {
+  const baseKey = await crypto.subtle.importKey(
+    "raw", enc.encode(pass), "PBKDF2", false, ["deriveKey"]
+  );
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt, iterations: 150000, hash: "SHA-256" },
+    baseKey,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+async function encodeMessage(text) {
+  dailyPassword = $("dailyPassword").value;
+
+  if (!dailyPassword) {
+    throw new Error("Missing daily password");
+  }
+
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await keyFromPassword(password, salt);
+  const data = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv }, key, enc.encode(text)
+  );
+
+  // Format: ME1.salt.iv.encrypted-message
+  return "ME1." + [salt, iv, new Uint8Array(data)]
+    .map(bytesToBase64)
+    .map(x => x.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, ""))
+    .join(".");
+}
+
+function safeBase64ToBytes(text) {
+  text = text.replace(/-/g, "+").replace(/_/g, "/");
+  while (text.length % 4) text += "=";
+  return base64ToBytes(text);
+}
+
+async function decodeMessage(text) {
+  dailyPassword = $("dailyPassword").value;
+
+  if (!dailyPassword) {
+    throw new Error("Missing daily password");
+  }
+
+  const parts = text.trim().split(".");
+  if (parts.length !== 4 || parts[0] !== "ME1") throw new Error();
+
+  const salt = safeBase64ToBytes(parts[1]);
+  const iv = safeBase64ToBytes(parts[2]);
+  const encrypted = safeBase64ToBytes(parts[3]);
+  const key = await keyFromPassword(password, salt);
+
+  const data = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv }, key, encrypted
+  );
+  return dec.decode(data);
+}
+
+$("loginButton").onclick = () => {
+  const entered = $("password").value;
+
+  if (entered !== LOGIN_PASSWORD) {
+    $("loginStatus").textContent = "Incorrect password.";
+    $("password").value = "";
+    return;
+  }
+
+  $("password").value = "";
+  $("loginStatus").textContent = "";
+  $("login").classList.add("hidden");
+  $("app").classList.remove("hidden");
+  $("dailyPassword").focus();
+};
+
+$("password").addEventListener("keydown", e => {
+  if (e.key === "Enter") $("loginButton").click();
+});
+
+$("encode").onclick = async () => {
+  $("status").textContent = "";
+  try {
+    $("output").value = await encodeMessage($("input").value);
+  } catch {
+    $("status").textContent = "Could not encode message.";
+  }
+};
+
+$("decode").onclick = async () => {
+  $("status").textContent = "";
+  try {
+    $("output").value = await decodeMessage($("input").value);
+  } catch {
+    $("output").value = "";
+    $("status").textContent = "Could not decode message.";
+  }
+};
+
+$("clear").onclick = () => {
+  $("input").value = "";
+  $("output").value = "";
+  $("status").textContent = "";
+  $("input").focus();
+};
+
+$("copy").onclick = async () => {
+  try {
+    await navigator.clipboard.writeText($("output").value);
+    $("status").textContent = "Copied.";
+  } catch {
+    $("output").select();
+    document.execCommand("copy");
+    $("status").textContent = "Copied.";
+  }
+};
+
+// Remove sensitive text/key from the page when it is being closed.
+addEventListener("pagehide", () => {
+  dailyPassword = "";
+  $("dailyPassword").value = "";
+  $("input").value = "";
+  $("output").value = "";
+});
+</script>
+</html>
